@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 import serial
-import serial.tools.list_ports
 try:
     from tinytouch_keychain import (
         KeychainError, get_password_bytes, has_password, set_background_mode, set_password,
@@ -36,6 +35,7 @@ from tinytouch_runtime import (
     atomic_write_json,
     diagnostic,
 )
+from tinytouch_ports import comports
 
 
 SERVICE = "tinyTouch"
@@ -107,7 +107,7 @@ def normalize_serial(value: str) -> str:
 
 
 def port_identity(port_name: str) -> str:
-    for port in serial.tools.list_ports.comports():
+    for port in comports():
         if port.device == port_name and port.serial_number:
             identity = normalize_serial(port.serial_number)
             if identity:
@@ -663,7 +663,7 @@ class DeviceEndpoint(NamedTuple):
 
 def device_endpoints() -> list[DeviceEndpoint]:
     endpoints: list[DeviceEndpoint] = []
-    for item in serial.tools.list_ports.comports():
+    for item in comports():
         if not (
             item.vid == 0x303A
             and item.pid == 0x4001
