@@ -4,9 +4,9 @@ set -euo pipefail
 project_dir="${0:A:h:h}"
 build_dir="${TINYTOUCH_BUILD_DIR:-$project_dir/build/distribution}"
 dist_dir="$project_dir/dist"
-venv_dir="${TINYTOUCH_VENV_DIR:-$project_dir/.venv}"
+venv_dir="${TINYTOUCH_VENV_DIR:-$project_dir/.venv-release}"
 venv_python="$venv_dir/bin/python"
-bootstrap_python="${TINYTOUCH_PYTHON:-python3}"
+bootstrap_python="${TINYTOUCH_PYTHON:-python3.13}"
 version="${TINYTOUCH_VERSION:-$(tr -d '[:space:]' < "$project_dir/VERSION")}"
 output="${TINYTOUCH_OUTPUT:-$dist_dir/tinytouch.tar.gz}"
 signing_identity="${TINYTOUCH_SIGNING_IDENTITY:-}"
@@ -14,6 +14,8 @@ signing_identity="${TINYTOUCH_SIGNING_IDENTITY:-}"
 if [[ ! -x "$venv_python" ]]; then
   "$bootstrap_python" -m venv "$venv_dir"
 fi
+
+"$venv_python" "$project_dir/packaging/check-python-runtime.py"
 
 # PEP 517 backends installed in the build environment are executables. Add the
 # environment's bin directory so source distributions can invoke them.
@@ -58,6 +60,7 @@ fi
 
 bundle="$build_dir/bin/tinytouch"
 executable="$bundle/tinytouch"
+"$venv_python" "$project_dir/packaging/check-python-runtime.py" "$bundle"
 "$executable" _package_test
 network_ok=0
 for attempt in 1 2 3; do

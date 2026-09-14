@@ -20,6 +20,7 @@ __pycache__/
 .DS_Store
 __MACOSX/
 .venv/
+.venv-release/
 .venv-x86_64/
 .python-x86_64/
 .vercel
