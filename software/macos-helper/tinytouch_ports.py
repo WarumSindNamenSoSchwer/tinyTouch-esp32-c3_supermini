@@ -118,6 +118,7 @@ class MacSerialPorts:
 def _location_string(value: int | None) -> str:
     if value is None:
         return ""
+    value &= 0xFFFFFFFF
     parts = [f"{value >> 24}-"]
     while value & 0xF00000:
         if len(parts) > 1:

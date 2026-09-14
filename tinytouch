@@ -1336,6 +1336,8 @@ def package_test() -> None:
     """Check bundled imports and report the executable architecture."""
     import certifi  # noqa: F401
     import serial  # type: ignore  # noqa: F401
+    from tinytouch_ports import comports
+    comports()
     say(f"package ok ({platform.machine()})")
 
 

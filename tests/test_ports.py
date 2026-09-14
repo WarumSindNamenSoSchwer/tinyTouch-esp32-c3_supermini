@@ -1,12 +1,13 @@
 """Check discovery metadata and native resource ownership on every exit path."""
 
 import sys
+import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "software/macos-helper"))
-from tinytouch_ports import MacSerialPorts, SerialPort  # noqa: E402
+from tinytouch_ports import MacSerialPorts, SerialPort, _location_string  # noqa: E402
 import tinytouch_helper as helper  # noqa: E402
 
 
@@ -88,6 +89,9 @@ class NativeOwnershipTests(unittest.TestCase):
 
 
 class HelperDiscoveryTests(unittest.TestCase):
+    def test_signed_registry_location_preserves_usb_bus_number(self):
+        self.assertEqual(_location_string(-2146369536), "128-1.1")
+
     def test_only_tinytouch_usb_identities_become_endpoints(self):
         ports = [
             SerialPort("/dev/cu.tt", 0x303A, 0x4001, "TT-001122aabbcc", "1-1"),
@@ -100,6 +104,29 @@ class HelperDiscoveryTests(unittest.TestCase):
                 helper.DeviceEndpoint("TT-001122AABBCC", "/dev/cu.tt", "1-1")
             ])
             self.assertEqual(helper.port_identity("/dev/cu.tt"), "TT-001122AABBCC")
+
+
+class NativeMemoryTests(unittest.TestCase):
+    def test_repeated_scans_have_bounded_native_memory(self):
+        # Use a fresh process so earlier tests cannot hide growth behind their
+        # peak RSS. Python allocation tracking cannot detect CF/IOKit leaks.
+        script = """
+import resource
+from tinytouch_ports import comports
+for _ in range(1000):
+    comports()
+baseline = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+for _ in range(100000):
+    comports()
+growth = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - baseline
+assert growth < 4 * 1024 * 1024, f"Serial discovery grew by {growth} bytes"
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(__file__).resolve().parents[1] / "software/macos-helper",
+            capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
