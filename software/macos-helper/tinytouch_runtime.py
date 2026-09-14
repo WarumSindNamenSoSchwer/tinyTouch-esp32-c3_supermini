@@ -208,7 +208,11 @@ class BackoffPolicy:
     jitter: float = 0.2
 
     def delay(self, failures: int, *, random_value: Callable[[], float] = random.random) -> float:
-        base = min(self.maximum, self.initial * self.multiplier ** max(0, failures - 1))
+        base = min(self.maximum, self.initial)
+        for _ in range(max(0, failures - 1)):
+            if base >= self.maximum:
+                break
+            base = min(self.maximum, base * self.multiplier)
         spread = base * self.jitter
         return max(0.0, base - spread + (2 * spread * random_value()))
 

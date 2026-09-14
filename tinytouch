@@ -764,10 +764,10 @@ def device_account(port: str) -> str:
     if override:
         return override
     try:
-        import serial.tools.list_ports  # type: ignore
+        from tinytouch_ports import comports
     except ImportError as exc:
         raise ToolError("pyserial is required to identify this tinyTouch device.") from exc
-    for candidate in serial.tools.list_ports.comports():
+    for candidate in comports():
         if candidate.device != port:
             continue
         serial_number = re.sub(r"[^A-Za-z0-9_.-]", "", candidate.serial_number or "").upper()
@@ -1336,6 +1336,8 @@ def package_test() -> None:
     """Check bundled imports and report the executable architecture."""
     import certifi  # noqa: F401
     import serial  # type: ignore  # noqa: F401
+    from tinytouch_ports import comports
+    comports()
     say(f"package ok ({platform.machine()})")
 
 

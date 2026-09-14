@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from collections import deque
 from enum import Enum
 import hashlib
 import hmac
@@ -19,7 +20,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 import serial
-import serial.tools.list_ports
 try:
     from tinytouch_keychain import (
         KeychainError, get_password_bytes, has_password, set_background_mode, set_password,
@@ -36,6 +36,7 @@ from tinytouch_runtime import (
     atomic_write_json,
     diagnostic,
 )
+from tinytouch_ports import comports
 
 
 SERVICE = "tinyTouch"
@@ -56,7 +57,7 @@ MAX_PASSWORD_BYTES = 160
 MAX_EVENT_AUTHENTICATORS = 8
 MAX_COUNTER = (1 << 64) - 1
 MAX_SCORE = (1 << 31) - 1
-REATTACHED_DEVICES: set[str] = set()
+REATTACHED_DEVICES: deque[str] = deque(maxlen=256)
 
 # macOS virtual key codes for the physical keys used by TinyUSB's US ASCII map.
 _MAC_KEYCODES = {
@@ -107,7 +108,7 @@ def normalize_serial(value: str) -> str:
 
 
 def port_identity(port_name: str) -> str:
-    for port in serial.tools.list_ports.comports():
+    for port in comports():
         if port.device == port_name and port.serial_number:
             identity = normalize_serial(port.serial_number)
             if identity:
@@ -135,14 +136,19 @@ def fingerprint_account(device_id: str, slot: int) -> str:
 
 def load_passwords(device_id: str) -> dict[int, bytearray]:
     passwords = {0: keychain_get(device_id)}
-    for slot in range(1, 6):
-        account = fingerprint_account(device_id, slot)
-        if has_password(SERVICE, account):
-            try:
-                passwords[slot] = keychain_get(account)
-            except KeyError:
-                pass
-    return passwords
+    try:
+        for slot in range(1, 6):
+            account = fingerprint_account(device_id, slot)
+            if has_password(SERVICE, account):
+                try:
+                    passwords[slot] = keychain_get(account)
+                except KeyError:
+                    pass
+        return passwords
+    except BaseException:
+        for value in passwords.values():
+            value[:] = b"\x00" * len(value)
+        raise
 
 
 def settings_path(device_id: str) -> Path:
@@ -511,16 +517,19 @@ def open_serial(port: str) -> serial.Serial:
         ser.rts = False
     except (OSError, serial.SerialException):
         pass
-    ser.open()
     try:
-        ser.dtr = True
-        ser.rts = False
-    except (OSError, serial.SerialException):
-        pass
-    # Discard boot diagnostics and any partial command from an earlier USB
-    # session. The helper only accepts this connection after a fresh PING/PONG.
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
+        ser.open()
+        try:
+            ser.dtr = True
+            ser.rts = False
+        except (OSError, serial.SerialException):
+            pass
+        # Discard boot diagnostics and partial commands from the previous session.
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+    except BaseException:
+        ser.close()
+        raise
     return ser
 
 
@@ -560,21 +569,23 @@ def serve_port(
     device_id: str | None = None,
 ) -> None:
     device_id = normalize_serial(device_id or "") or port_identity(port)
-    password = load_passwords(device_id)
-    pairing_key = pairing_keychain_get(device_id)
-    state = load_state(device_id)
-    settings = load_settings(device_id)
+    password: dict[int, bytearray] = {}
+    pairing_key = bytearray()
     last_port_check = 0.0
     last_received = time.monotonic()
     heartbeat_sent_at: float | None = None
     decoder = SerialFrameDecoder(MAX_SERIAL_LINE_BYTES)
     try:
+        password = load_passwords(device_id)
+        pairing_key = pairing_keychain_get(device_id)
+        state = load_state(device_id)
+        settings = load_settings(device_id)
         with open_serial(port) as ser:
             require_startup_status(ser, device_id, port)
             if device_id not in REATTACHED_DEVICES:
                 # A new login creates a new helper process. Ask the firmware to
                 # re-enumerate once so macOS rebuilds stale CDC and HID endpoints.
-                REATTACHED_DEVICES.add(device_id)
+                REATTACHED_DEVICES.append(device_id)
                 ser.write(b"USB RECONNECT\n")
                 ser.flush()
                 diagnostic("worker.usb_reattach_requested", device_id=device_id, port=port)
@@ -663,7 +674,7 @@ class DeviceEndpoint(NamedTuple):
 
 def device_endpoints() -> list[DeviceEndpoint]:
     endpoints: list[DeviceEndpoint] = []
-    for item in serial.tools.list_ports.comports():
+    for item in comports():
         if not (
             item.vid == 0x303A
             and item.pid == 0x4001
@@ -711,6 +722,10 @@ class Worker:
                 device_id=self.endpoint.device_id,
             )
         except Exception as exc:
+            # Tracebacks retain worker frames, serial objects, and password maps.
+            exc.__traceback__ = None
+            exc.__context__ = None
+            exc.__cause__ = None
             self.error = exc
             self.phase = WorkerPhase.FAILED
         else:
@@ -744,6 +759,18 @@ class ManagerPhase(Enum):
 
 def run_manager() -> None:
     workers: dict[str, Worker] = {}
+    try:
+        _manage_workers(workers)
+    finally:
+        # Drain old workers before the caller restarts discovery after an error.
+        for worker in workers.values():
+            worker.stop()
+        for worker in workers.values():
+            if worker.thread.ident is not None:
+                worker.thread.join()
+
+
+def _manage_workers(workers: dict[str, Worker]) -> None:
     failures: dict[str, int] = {}
     retry_after: dict[str, float] = {}
     backoff = BackoffPolicy(initial=0.25, maximum=MAX_WORKER_RETRY_SECONDS)
@@ -790,6 +817,10 @@ def run_manager() -> None:
         transition(ManagerPhase.RUNNING, "lease_released")
 
         endpoints = {endpoint.device_id: endpoint for endpoint in device_endpoints()}
+        for device_id in failures.keys() | retry_after.keys():
+            if device_id not in endpoints and device_id not in workers:
+                failures.pop(device_id, None)
+                retry_after.pop(device_id, None)
         for device_id, worker in list(workers.items()):
             current = endpoints.get(device_id)
             if current is None or current.port != worker.endpoint.port:
