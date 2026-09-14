@@ -95,6 +95,12 @@ if [ ! -d "$bundle" ]; then
 fi
 xattr -dr com.apple.quarantine "$bundle" 2>/dev/null || true
 
+if ! "$bundle/tinytouch" --version; then
+  echo 'The downloaded tinyTouch CLI cannot start on this Mac.' >&2
+  echo 'Installation stopped. Contact tinytouch@alpacaengineer.ing.' >&2
+  exit 1
+fi
+
 if { [ -d "$install_dir" ] && [ -w "$install_dir" ]; } || \
    { [ ! -e "$install_dir" ] && [ -w "${install_dir%/*}" ]; }; then
   mkdir -p "$install_dir"

@@ -2,11 +2,19 @@
 
 On an Apple silicon or Intel Mac:
 
+## 1. Install
+
 ```sh
-curl -fsSL https://github.com/ZimengXiong/tinyTouch/releases/latest/download/install.sh | sh && tinytouch setup
+curl -fsSL https://github.com/ZimengXiong/tinyTouch/releases/latest/download/install.sh | sh
 ```
 
-Follow the CLI instructions.
+## 2. Set up
+
+```sh
+tinytouch setup
+```
+
+Follow the CLI instructions. Run `tinytouch setup` again any time to edit your configuration.
 
 ## Modes
 
