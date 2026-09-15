@@ -1,0 +1,57 @@
+# ESP32-C3 SuperMini overrides.
+#
+# The C3 has no USB-OTG peripheral, so there is no TinyUSB composite device
+# here: the console is the built-in USB-Serial/JTAG port and the keyboard is
+# BLE HID. Everything TinyUSB-specific in sdkconfig.defaults is simply unused
+# on this target, and BLE has to be turned on instead.
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# The USB-Serial/JTAG port carries the tinyTouch line protocol, and the firmware
+# owns it through the USB-Serial/JTAG driver. The IDF console must not also
+# write there: interleaved log lines would corrupt the protocol stream the host
+# helper parses. Logs are therefore dropped rather than shared.
+#
+# UART0 is not an alternative here: on the C3 SuperMini its default pads are
+# GPIO21/GPIO20, which this board uses for the fingerprint sensor.
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
+# The secondary console defaults back to USB-Serial/JTAG and would install its
+# own VFS driver on the port this firmware owns, so it has to be off as well.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=n
+
+# BLE HID keyboard. Bluedroid is used because esp_hid's BLE device role and its
+# GATTS callback registration are what this firmware binds to.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=y
+CONFIG_BT_BLE_ENABLED=y
+CONFIG_BT_GATTS_ENABLE=y
+CONFIG_BT_BLE_SMP_ENABLE=y
+CONFIG_BT_CLASSIC_ENABLED=n
+CONFIG_BT_BLE_42_FEATURES_SUPPORTED=y
+
+# Bonding must survive reboots so a paired Mac reconnects without re-pairing.
+CONFIG_BT_BLE_BLUFI_ENABLE=n
+
+# Secure boot signing is an S3 release concern and needs a signing key that is
+# deliberately not in the repository. A C3 build stays unsigned.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=n
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# BLE plus mbedTLS RSA key generation needs more room than the default app.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# BLE plus mbedTLS pushes the image close to the 1 MB OTA slot. Optimize for
+# size and drop the debug-only strings so updates keep meaningful headroom.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y

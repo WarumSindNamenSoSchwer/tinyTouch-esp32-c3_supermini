@@ -110,7 +110,9 @@ def normalize_serial(value: str) -> str:
 def port_identity(port_name: str) -> str:
     for port in comports():
         if port.device == port_name and port.serial_number:
-            identity = normalize_serial(port.serial_number)
+            identity = device_identity(port.vid, port.pid, port.serial_number)
+            if identity is None:
+                identity = normalize_serial(port.serial_number)
             if identity:
                 return identity
     identity = normalize_serial(Path(port_name).name)
@@ -672,19 +674,45 @@ class DeviceEndpoint(NamedTuple):
     location: str
 
 
+# Espressif vendor ID, shared by every supported board.
+ESPRESSIF_VENDOR_ID = 0x303A
+
+# A composite TinyUSB build (ESP32-S3) owns its descriptors and reports the
+# firmware PID with a "TT-<mac>" serial number.
+TINYTOUCH_USB_PRODUCT_ID = 0x4001
+
+# The ESP32-C3 has no USB-OTG peripheral. Its port is the fixed-function
+# USB-Serial/JTAG controller, whose descriptors the firmware cannot change: the
+# PID is always 0x1001 and the serial number is the MAC in colon notation.
+USB_SERIAL_JTAG_PRODUCT_ID = 0x1001
+
+_TINYTOUCH_SERIAL = re.compile(r"TT-[0-9A-Fa-f]{12}")
+_MAC_SERIAL = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+
+
+def device_identity(vid: int | None, pid: int | None,
+                    serial_number: object) -> str | None:
+    """Return a stable device id for a supported board, else None."""
+    if vid != ESPRESSIF_VENDOR_ID or not isinstance(serial_number, str):
+        return None
+    if pid == TINYTOUCH_USB_PRODUCT_ID and _TINYTOUCH_SERIAL.fullmatch(serial_number):
+        return normalize_serial(serial_number)
+    if pid == USB_SERIAL_JTAG_PRODUCT_ID and _MAC_SERIAL.fullmatch(serial_number):
+        # Normalize to the same TT-<mac> shape the composite build reports, so
+        # one device keeps one keychain identity across both board families.
+        return normalize_serial("TT-" + serial_number.replace(":", ""))
+    return None
+
+
 def device_endpoints() -> list[DeviceEndpoint]:
     endpoints: list[DeviceEndpoint] = []
     for item in comports():
-        if not (
-            item.vid == 0x303A
-            and item.pid == 0x4001
-            and isinstance(item.serial_number, str)
-            and re.fullmatch(r"TT-[0-9A-Fa-f]{12}", item.serial_number)
-        ):
+        identity = device_identity(item.vid, item.pid, item.serial_number)
+        if identity is None:
             continue
         endpoints.append(
             DeviceEndpoint(
-                normalize_serial(item.serial_number),
+                identity,
                 item.device,
                 item.location if isinstance(item.location, str) else "",
             )

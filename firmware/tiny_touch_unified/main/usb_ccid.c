@@ -1,5 +1,20 @@
 #include "usb_ccid.h"
 
+#include "sdkconfig.h"
+
+#if CONFIG_IDF_TARGET_ESP32C3
+
+// USB CCID needs a configurable composite USB device, which requires a USB-OTG
+// peripheral. The ESP32-C3 only has the fixed-function USB-Serial/JTAG
+// controller, so PIV mode cannot exist on this target and the transport is a
+// no-op. HID mode over BLE provides the authentication path instead.
+
+void usb_ccid_start(ccid_apdu_handler_t handler) { (void)handler; }
+
+void usb_ccid_rescan(void) {}
+
+#else
+
 #include <string.h>
 
 #include "esp_log.h"
@@ -232,3 +247,5 @@ void usb_ccid_rescan(void) {
   vTaskDelay(pdMS_TO_TICKS(250));
   tud_connect();
 }
+
+#endif  // CONFIG_IDF_TARGET_ESP32C3

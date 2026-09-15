@@ -3,8 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "class/hid/hid_device.h"
 #include "config_console.h"
+#include "keyboard_io.h"
+#include "sdkconfig.h"
 #include "device_config.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -16,6 +17,12 @@
 #include "mbedtls/md.h"
 #include "piv.h"
 #include "usb_descriptors.h"
+
+#if CONFIG_IDF_TARGET_ESP32C3
+#include "hid_keycodes.h"
+#else
+#include "class/hid/hid_device.h"
+#endif
 
 static const char *TAG = "touch_hid";
 static const uint8_t ascii_to_keycode[128][2] = {HID_ASCII_TO_KEYCODE};
@@ -71,7 +78,7 @@ static void secure_wipe(void *data, size_t length) {
 
 static bool wait_hid_ready(void) {
   TickType_t started = xTaskGetTickCount();
-  while (!tud_hid_ready()) {
+  while (!keyboard_io_ready()) {
     if ((TickType_t)(xTaskGetTickCount() - started) >= pdMS_TO_TICKS(2000)) {
       return false;
     }
@@ -81,12 +88,11 @@ static bool wait_hid_ready(void) {
 }
 
 static bool send_key(uint8_t modifier, uint8_t key) {
-  uint8_t report[6] = {key, 0, 0, 0, 0, 0};
   if (!wait_hid_ready()) return false;
-  if (!tud_hid_keyboard_report(0, modifier, report)) return false;
+  if (!keyboard_io_send(modifier, key)) return false;
   vTaskDelay(pdMS_TO_TICKS(device_config_typing_delay_ms()));
   if (!wait_hid_ready()) return false;
-  if (!tud_hid_keyboard_report(0, 0, NULL)) return false;
+  if (!keyboard_io_send(0, 0)) return false;
   vTaskDelay(pdMS_TO_TICKS(device_config_typing_delay_ms()));
   return true;
 }
@@ -366,6 +372,12 @@ static void handle_fingerprint_match(fingerprint_match_t match) {
     touch_pin_hid_log_event(success ? "hid_typed" : "hid_failed", match.slot);
     if (!success) ESP_LOGW(TAG, "HID helper request failed");
   } else {
+#if CONFIG_IDF_TARGET_ESP32C3
+    // PIV needs a USB CCID smart-card interface, which requires USB-OTG. The
+    // ESP32-C3 has none, so this build only ever serves HID mode.
+    ESP_LOGW(TAG, "PIV mode is not available on this target; use HID mode");
+    touch_pin_hid_log_event("piv_unsupported", match.slot);
+#else
     // The PIV applet accepts this PIN. Emit it only after a verified background
     // fingerprint match, so the macOS smart-card PIN field can complete login.
     static const uint8_t piv_pin[] = {'1', '1', '1', '1', '1', '1'};
@@ -374,6 +386,7 @@ static void handle_fingerprint_match(fingerprint_match_t match) {
     bool typed = type_ascii(piv_pin, sizeof(piv_pin));
     touch_pin_hid_log_event(typed ? "piv_pin_typed" : "piv_pin_failed", match.slot);
     if (!typed) ESP_LOGW(TAG, "PIV PIN typing failed");
+#endif
   }
 }
 
@@ -501,6 +514,8 @@ bool touch_pin_hid_submit_response(const char *response) {
   return xQueueSend(password_responses, queued, 0) == pdTRUE;
 }
 
+#if !CONFIG_IDF_TARGET_ESP32C3
+
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
   (void)instance;
   return tiny_touch_hid_report_descriptor;
@@ -526,3 +541,5 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
   (void)buffer;
   (void)bufsize;
 }
+
+#endif  // !CONFIG_IDF_TARGET_ESP32C3

@@ -1,12 +1,19 @@
-#include "tusb.h"
+#include "usb_descriptors.h"
 
 #include <stdio.h>
 
 #include "esp_mac.h"
+#include "sdkconfig.h"
+
+#if !CONFIG_IDF_TARGET_ESP32C3
+#include "tusb.h"
+#endif
 
 #define USB_VID 0x303a
 #define USB_PID 0x4001
 #define USB_BCD 0x0200
+
+#if !CONFIG_IDF_TARGET_ESP32C3
 
 #define ITF_NUM_CCID 0
 #define ITF_NUM_HID 1
@@ -83,7 +90,11 @@ const uint8_t tiny_touch_configuration_descriptor[] = {
                      EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
+#endif  // !CONFIG_IDF_TARGET_ESP32C3
+
 static char tiny_touch_serial[20] = "TT-PIV-PROTOTYPE";
+
+#if !CONFIG_IDF_TARGET_ESP32C3
 
 char const *tiny_touch_string_descriptors[] = {
   (const char[]){0x09, 0x04},
@@ -95,9 +106,17 @@ char const *tiny_touch_string_descriptors[] = {
 const int tiny_touch_string_descriptor_count =
   sizeof(tiny_touch_string_descriptors) / sizeof(tiny_touch_string_descriptors[0]);
 
+#endif  // !CONFIG_IDF_TARGET_ESP32C3
+
 void tiny_touch_init_serial(void) {
   uint8_t mac[6];
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) return;
   snprintf(tiny_touch_serial, sizeof(tiny_touch_serial), "TT-%02X%02X%02X%02X%02X%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
+
+const char *tiny_touch_serial_number(void) { return tiny_touch_serial; }
+
+// The BLE advertisement carries the same identity the USB build exposes as its
+// product string, so a host sees one recognizable device name either way.
+const char *tiny_touch_device_name(void) { return "tinyTouch"; }

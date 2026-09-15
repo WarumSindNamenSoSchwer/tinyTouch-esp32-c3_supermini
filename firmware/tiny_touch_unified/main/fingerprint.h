@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -10,6 +11,9 @@ typedef struct {
 
 void fingerprint_init(void);
 bool fingerprint_is_ready(void);
+// Bring-up diagnostic: sweep pin orientation and baud rate, reporting each
+// attempt into report. Returns true when the sensor answered.
+bool fingerprint_probe(char *report, size_t report_cap);
 bool fingerprint_recover(void);
 bool fingerprint_present_hint(void);
 void fingerprint_led_idle(void);

@@ -7,10 +7,20 @@
 #include "freertos/semphr.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
+#include "sdkconfig.h"
 
 #define CONFIG_NAMESPACE "tt6"
 #define CONFIG_KEY "config"
 #define CONFIG_VERSION 6
+
+#if CONFIG_IDF_TARGET_ESP32C3
+// PIV requires a USB CCID interface, which requires USB-OTG. The ESP32-C3 has
+// no such peripheral, so HID is the only mode this target can ever serve and
+// therefore also the default.
+#define DEVICE_MODE_DEFAULT DEVICE_MODE_HID
+#else
+#define DEVICE_MODE_DEFAULT DEVICE_MODE_PIV
+#endif
 
 typedef struct {
   uint8_t version;
@@ -32,7 +42,7 @@ static void unlock(void) { assert(xSemaphoreGive(config_mutex) == pdTRUE); }
 static void defaults(stored_config_t *value) {
   memset(value, 0, sizeof(*value));
   value->version = CONFIG_VERSION;
-  value->mode = DEVICE_MODE_PIV;
+  value->mode = DEVICE_MODE_DEFAULT;
   value->submit_enter = 1;
   value->typing_delay_ms = 7;
   value->touch_cooldown_ms = 800;
@@ -143,7 +153,7 @@ bool device_config_remove_hid_host(const uint8_t id[DEVICE_CONFIG_HID_KEY_ID_SIZ
           (candidate.hid_host_count - index - 1) * sizeof(candidate.hid_hosts[0]));
   candidate.hid_host_count--; memset(&candidate.hid_hosts[candidate.hid_host_count], 0,
                                     sizeof(candidate.hid_hosts[0]));
-  if (candidate.mode == DEVICE_MODE_HID && candidate.hid_host_count == 0) candidate.mode = DEVICE_MODE_PIV;
+  if (candidate.mode == DEVICE_MODE_HID && candidate.hid_host_count == 0) candidate.mode = DEVICE_MODE_DEFAULT;
   bool ok = replace_locked(&candidate); unlock(); return ok;
 }
 

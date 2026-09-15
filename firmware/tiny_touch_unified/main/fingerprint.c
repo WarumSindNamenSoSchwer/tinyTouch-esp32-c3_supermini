@@ -1,5 +1,6 @@
 #include "fingerprint.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "driver/gpio.h"
@@ -12,9 +13,36 @@
 static const char *TAG = "fingerprint";
 
 static const uart_port_t FP_UART = UART_NUM_1;
-static const int FP_TX_PIN = 43;
-static const int FP_RX_PIN = 44;
-static const int FP_INT_PIN = 2;
+// Board wiring. The ESP32-S3 prototype used the UART0 pads; the ESP32-C3
+// SuperMini exposes its free UART pads on GPIO20/GPIO21 instead, so the pins
+// follow the target rather than being hardcoded to one board.
+//
+// These names are from the ESP32's point of view: FP_TX_PIN is the pin the ESP
+// transmits on, which is wired to the sensor's RX pad. Verified on hardware
+// with "FINGER PROBE", which answered only at tx=20, rx=21.
+#ifndef FP_TX_PIN_NUM
+#if CONFIG_IDF_TARGET_ESP32C3
+#define FP_TX_PIN_NUM 20
+#else
+#define FP_TX_PIN_NUM 43
+#endif
+#endif
+#ifndef FP_RX_PIN_NUM
+#if CONFIG_IDF_TARGET_ESP32C3
+#define FP_RX_PIN_NUM 21
+#else
+#define FP_RX_PIN_NUM 44
+#endif
+#endif
+#ifndef FP_INT_PIN_NUM
+// The sensor's TOUCH_OUT line. GPIO2 is a strapping pin on the ESP32-C3, but it
+// only has to be high while the chip comes out of reset, and the firmware
+// configures its pull-down well after that, so the wiring stays on GPIO2.
+#define FP_INT_PIN_NUM 2
+#endif
+static const int FP_TX_PIN = FP_TX_PIN_NUM;
+static const int FP_RX_PIN = FP_RX_PIN_NUM;
+static const int FP_INT_PIN = FP_INT_PIN_NUM;
 static const int INT_ACTIVE_VALUE = 1;
 static const uint16_t START_SLOT = 1;
 static const uint16_t END_SLOT = 5;
@@ -341,6 +369,54 @@ void fingerprint_init(void) {
   }
   ESP_LOGI(TAG, "sensor verify: %s", ok ? "ok" : "failed");
   if (ok) fingerprint_led_idle();
+}
+
+bool fingerprint_probe(char *report, size_t report_cap) {
+  // Bring-up diagnostic. A silent sensor is almost always one of three wiring
+  // or configuration mistakes: swapped TX/RX, a non-default baud rate, or no
+  // power. Sweep the plausible combinations and report which one answers,
+  // instead of leaving the operator to guess from a single "offline".
+  static const int baud_rates[] = {57600, 9600, 19200, 38400, 115200};
+  size_t used = 0;
+  bool found = false;
+  // The background recovery loop retries the sensor every few seconds and holds
+  // this mutex while it does. Wait long enough to win it instead of reporting a
+  // misleading empty probe.
+  if (!fp_take(20000)) {
+    snprintf(report, report_cap, "busy");
+    return false;
+  }
+  for (int swapped = 0; swapped <= 1 && !found; swapped++) {
+    int tx = swapped ? FP_RX_PIN : FP_TX_PIN;
+    int rx = swapped ? FP_TX_PIN : FP_RX_PIN;
+    for (size_t i = 0; i < sizeof(baud_rates) / sizeof(baud_rates[0]); i++) {
+      if (uart_set_pin(FP_UART, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK ||
+          uart_set_baudrate(FP_UART, baud_rates[i]) != ESP_OK) {
+        continue;
+      }
+      vTaskDelay(pdMS_TO_TICKS(30));
+      uint8_t confirm = 0xff;
+      uint8_t params[] = {0x00, 0x00, 0x00, 0x00};
+      bool ok = fp_command(0x13, params, sizeof(params), &confirm, NULL, NULL, 600) &&
+                confirm == 0x00;
+      int written = snprintf(report + used, report_cap - used, "%stx=%d,rx=%d,baud=%d:%s",
+                             used ? " " : "", tx, rx, baud_rates[i], ok ? "OK" : "-");
+      if (written > 0 && (size_t)written < report_cap - used) used += written;
+      if (ok) {
+        found = true;
+        break;
+      }
+    }
+  }
+  // Restore the configured wiring so a failed probe cannot leave the sensor
+  // transport pointing at the swapped pins.
+  if (!found) {
+    uart_set_pin(FP_UART, FP_TX_PIN, FP_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_set_baudrate(FP_UART, 57600);
+  }
+  set_sensor_ready(found);
+  fp_give();
+  return found;
 }
 
 bool fingerprint_is_ready(void) {

@@ -11,7 +11,8 @@
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
 #include "nvs_flash.h"
-#include "tusb.h"
+#include "console_io.h"
+#include "sdkconfig.h"
 
 #include "device_config.h"
 #include "fingerprint.h"
@@ -47,20 +48,18 @@ static void wipe(void *data, size_t length) {
 }
 
 static bool cdc_write_all(const char *data, size_t length, int64_t deadline) {
-  if (!tud_cdc_connected()) return false;
+  if (!console_io_connected()) return false;
 
   size_t offset = 0;
   while (offset < length) {
-    size_t remaining = length - offset;
-    uint32_t request = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining;
-    uint32_t written = tud_cdc_write(data + offset, request);
+    size_t written = console_io_write(data + offset, length - offset);
     if (written) {
       offset += written;
-      tud_cdc_write_flush();
+      console_io_flush();
       continue;
     }
 
-    tud_cdc_write_flush();
+    console_io_flush();
     if (esp_timer_get_time() >= deadline) return false;
     vTaskDelay(pdMS_TO_TICKS(1));
   }
@@ -163,6 +162,11 @@ static void status(void) {
 
 static void set_mode(const char *mode) {
   if (!require_authorized()) return;
+#if CONFIG_IDF_TARGET_ESP32C3
+  // PIV needs a USB CCID interface, which this target's USB hardware cannot
+  // provide. Reject the switch instead of storing a mode that never works.
+  if (strcmp(mode, "PIV") == 0) { reply("ERR SET MODE unsupported=piv"); return; }
+#endif
   bool ok = strcmp(mode, "PIV") == 0 ? device_config_set_mode(DEVICE_MODE_PIV) :
             strcmp(mode, "HID") == 0 ? device_config_set_mode(DEVICE_MODE_HID) : false;
   reply(ok ? "OK SET MODE" : "ERR SET MODE");
@@ -221,6 +225,14 @@ static void host_list(void) {
   reply(line);
 }
 
+static void fingerprint_probe_command(void) {
+  char report[256] = {0};
+  bool found = fingerprint_probe(report, sizeof(report));
+  char line[320];
+  snprintf(line, sizeof(line), "%s FINGER PROBE %s", found ? "OK" : "ERR", report);
+  reply(line);
+}
+
 static void fingerprint_command(char *arguments) {
   if (!require_authorized()) return;
   uint32_t slot = 0;
@@ -246,6 +258,7 @@ static void factory_reset(void) {
   reply(ok ? "OK RESET FACTORY" : "ERR RESET FACTORY");
 }
 
+#if !CONFIG_IDF_TARGET_ESP32C3
 static void piv_create_task(void *argument) {
   (void)argument;
   bool ok = piv_create_identity();
@@ -259,9 +272,14 @@ static void piv_create_task(void *argument) {
   }
   vTaskDelete(NULL);
 }
+#endif
 
 static void piv_create(void) {
   if (!require_authorized()) return;
+#if CONFIG_IDF_TARGET_ESP32C3
+  reply("ERR PIV CREATE unsupported=piv");
+  return;
+#else
   if (piv_create_active) { reply("ERR PIV BUSY"); return; }
   piv_create_active = true;
   BaseType_t created = xTaskCreate(piv_create_task, "piv_create", 10240, NULL, 1, NULL);
@@ -271,6 +289,7 @@ static void piv_create(void) {
     return;
   }
   reply("EVENT PIV_CREATE");
+#endif
 }
 
 static void usb_reconnect_task(void *argument) {
@@ -342,6 +361,7 @@ static void handle_command(void) {
   else if (strncmp(command, "HOST ADD ", 9) == 0) host_add(command + 9);
   else if (strncmp(command, "HOST REMOVE ", 12) == 0) host_remove(command + 12);
   else if (strcmp(command, "HOST LIST") == 0) host_list();
+  else if (strcmp(command, "FINGER PROBE") == 0) fingerprint_probe_command();
   else if (strncmp(command, "FINGER ", 7) == 0) fingerprint_command(command + 7);
   else if (strcmp(command, "PIV CREATE") == 0) piv_create();
   else if (strcmp(command, "RESET FACTORY") == 0) factory_reset();
@@ -363,9 +383,11 @@ static void console_task(void *arg) {
       firmware_update_abort(); clear_ota();
     }
     bool activity = false;
-    while (tud_cdc_available()) {
-      uint32_t count = tud_cdc_read(buffer, sizeof(buffer)); activity = count != 0;
-      for (uint32_t i = 0; i < count; i++) {
+    while (true) {
+      size_t count = console_io_read(buffer, sizeof(buffer));
+      if (!count) break;
+      activity = true;
+      for (size_t i = 0; i < count; i++) {
         if (buffer[i] == '\r') continue;
         if (buffer[i] == '\n') {
           command[command_length] = '\0';
@@ -386,6 +408,13 @@ static void console_task(void *arg) {
 }
 
 void config_console_start(void) {
+  console_io_init();
+#if CONFIG_IDF_TARGET_ESP32C3
+  // The IDF console is disabled on this target so that log output cannot
+  // corrupt the protocol stream. Announce readiness on the protocol itself,
+  // which also proves the transport works before any host command arrives.
+  config_console_send_line("EVENT READY " TINYTOUCH_FIRMWARE_VERSION);
+#endif
   write_lock = xSemaphoreCreateMutex();
   configASSERT(write_lock);
   BaseType_t created = xTaskCreate(console_task, "console", 6144, NULL, 3, NULL);
