@@ -30,3 +30,6 @@ __MACOSX/
 firmware/tiny_touch_unified/sdkconfig
 firmware/tiny_touch_unified/sdkconfig.old
 firmware/tiny_touch_unified/build/
+
+# Local GUI build output
+software/macos-gui/build/
