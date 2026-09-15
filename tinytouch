@@ -770,7 +770,15 @@ def device_account(port: str) -> str:
     for candidate in comports():
         if candidate.device != port:
             continue
-        serial_number = re.sub(r"[^A-Za-z0-9_.-]", "", candidate.serial_number or "").upper()
+        raw = candidate.serial_number or ""
+        # The ESP32-C3's fixed-function USB-Serial/JTAG controller reports the
+        # MAC in colon notation as its serial number. The helper normalizes
+        # that to the same TT-<mac> identity the composite ESP32-S3 firmware
+        # reports, so the CLI must store credentials under the identical
+        # account or the helper can never find them.
+        if re.fullmatch(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", raw):
+            raw = "TT-" + raw.replace(":", "")
+        serial_number = re.sub(r"[^A-Za-z0-9_.-]", "", raw).upper()
         if serial_number:
             return serial_number
     raise ToolError("tinyTouch did not expose a stable USB serial identity.")
