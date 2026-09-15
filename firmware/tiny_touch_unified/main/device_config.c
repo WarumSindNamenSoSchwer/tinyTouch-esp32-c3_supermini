@@ -18,8 +18,14 @@
 // no such peripheral, so HID is the only mode this target can ever serve and
 // therefore also the default.
 #define DEVICE_MODE_DEFAULT DEVICE_MODE_HID
+// A BLE link delivers reports once per connection interval, which macOS
+// negotiates at around 15 ms. A shorter gap between press and release lets two
+// reports land in one interval, where the host sees only the last one: keys go
+// missing or arrive stuck down. Pace typing to clear one interval instead.
+#define TYPING_DELAY_DEFAULT_MS 20
 #else
 #define DEVICE_MODE_DEFAULT DEVICE_MODE_PIV
+#define TYPING_DELAY_DEFAULT_MS 7
 #endif
 
 typedef struct {
@@ -44,7 +50,7 @@ static void defaults(stored_config_t *value) {
   value->version = CONFIG_VERSION;
   value->mode = DEVICE_MODE_DEFAULT;
   value->submit_enter = 1;
-  value->typing_delay_ms = 7;
+  value->typing_delay_ms = TYPING_DELAY_DEFAULT_MS;
   value->touch_cooldown_ms = 800;
 }
 

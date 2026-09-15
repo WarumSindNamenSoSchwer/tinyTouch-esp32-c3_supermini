@@ -226,6 +226,17 @@ static void host_list(void) {
   reply(line);
 }
 
+static void keyboard_test(void) {
+  if (!require_authorized()) return;
+  // Bring-up diagnostic for the keyboard transport. HID mode cannot type
+  // anything until a host helper supplies a password, so without this there is
+  // no way to tell a broken keyboard link from an unconfigured host.
+  if (!keyboard_io_ready()) { reply("ERR KEYBOARD TEST state=not_ready"); return; }
+  reply("OK KEYBOARD TEST typing=tinytouch");
+  static const uint8_t text[] = {'t','i','n','y','t','o','u','c','h'};
+  touch_pin_hid_type_test(text, sizeof(text));
+}
+
 static void fingerprint_probe_command(void) {
   char report[256] = {0};
   bool found = fingerprint_probe(report, sizeof(report));
@@ -363,6 +374,7 @@ static void handle_command(void) {
   else if (strncmp(command, "HOST REMOVE ", 12) == 0) host_remove(command + 12);
   else if (strcmp(command, "HOST LIST") == 0) host_list();
   else if (strcmp(command, "FINGER PROBE") == 0) fingerprint_probe_command();
+  else if (strcmp(command, "KEYBOARD TEST") == 0) keyboard_test();
   else if (strncmp(command, "FINGER ", 7) == 0) fingerprint_command(command + 7);
   else if (strcmp(command, "PIV CREATE") == 0) piv_create();
   else if (strcmp(command, "RESET FACTORY") == 0) factory_reset();

@@ -103,6 +103,13 @@ static bool type_ascii(const uint8_t *data, size_t length) {
   for (size_t i = 0; i < length; i++) {
     if (data[i] >= 128 || ascii_to_keycode[data[i]][1] == 0) return false;
   }
+  // Start from a known-empty report. A host can still hold modifier state from
+  // whatever the user pressed before this burst, and over BLE that state
+  // otherwise leaks into the first character: a lowercase password would begin
+  // with a capital. Clearing it costs one report and makes typing independent
+  // of what the keyboard looked like a moment earlier.
+  if (!wait_hid_ready() || !keyboard_io_send(0, 0)) return false;
+  vTaskDelay(pdMS_TO_TICKS(device_config_typing_delay_ms()));
   for (size_t i = 0; i < length; i++) {
     uint8_t modifier = ascii_to_keycode[data[i]][0] ? KEYBOARD_MODIFIER_LEFTSHIFT : 0;
     if (!send_key(modifier, ascii_to_keycode[data[i]][1])) return false;
@@ -495,6 +502,12 @@ void touch_pin_hid_start(void) {
   configASSERT(password_responses != NULL);
   BaseType_t created = xTaskCreate(touch_hid_task, "touch_hid", 6144, NULL, 4, NULL);
   configASSERT(created == pdPASS);
+}
+
+bool touch_pin_hid_type_test(const uint8_t *data, size_t length) {
+  bool ok = type_ascii(data, length);
+  touch_pin_hid_log_event(ok ? "keyboard_test_ok" : "keyboard_test_failed", (int)length);
+  return ok;
 }
 
 void touch_pin_hid_usb_attached(void) {
