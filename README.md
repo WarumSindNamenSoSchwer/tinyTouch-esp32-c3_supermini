@@ -30,6 +30,7 @@ if you would like to support this project, please consider [donating](https://gi
   - [blue pill](#blue-pill)
 - [hardware](#hardware)
 - [wiring](#wiring)
+- [esp32-c3 supermini](#esp32-c3-supermini)
 - [notes](#notes)
 
 ## red pill or blue pill?
@@ -225,14 +226,17 @@ when macos asks for the pin, touch the sensor.
 | part | used here | notes |
 | -- | -- | -- |
 | microcontroller | seeed studio esp32-s3 | needs native usb and hardware uart. secure boot + flash encryption strongly recommended |
+| microcontroller (alt) | esp32-c3 supermini | hid mode only, over bluetooth le. no usb-otg, so no piv. see [esp32-c3](#esp32-c3-supermini) |
 | fingerprint sensor | zw101-style uart sensor | uses the common `0xef01` packet protocol |
 | computer | macos | hid mode needs the helper. piv/pam mode needs macos smart card support |
 | case | printed top/bottom stl | `hardware/case/case_top.stl` and `hardware/case/case_bottom.stl` |
 | wiring/solder/etc | misc | whatever your build needs |
 
 other esp32-s3 boards should work if the usb and uart pins are available. other
-fingerprint sensors may work if they speak the same uart protocol. other
-microcontroller families can work, but are not currently supported.
+fingerprint sensors may work if they speak the same uart protocol.
+
+the esp32-c3 supermini is also supported, with real limitations. see
+[esp32-c3](#esp32-c3-supermini) below.
 
 ## wiring
 
@@ -240,6 +244,51 @@ the fingerprint sensor connects over uart to pins 6 and 7 for tx and rx.
 
 the interrupt pin can be connected anywhere. in firmware, it is connected to pin
 1.
+
+## esp32-c3 supermini
+
+the c3 has no usb-otg peripheral. its usb port is the fixed-function
+usb-serial/jtag controller, whose descriptors firmware cannot change. two
+consequences follow, and neither is a software choice:
+
+- **piv/pam mode does not exist on the c3.** it needs a usb ccid smart-card
+  interface. the firmware compiles it out, defaults to hid mode, and `SET MODE
+  PIV` answers `ERR SET MODE unsupported=piv`.
+- **the keyboard is bluetooth le, not usb.** the c3 cannot enumerate as a usb
+  keyboard at all. it pairs as a ble keyboard named `tinyTouch`, so it must be
+  paired once in system settings before it can type. `STATUS` reports
+  `keyboard=advertising` until then, and `keyboard=connected` after.
+
+build and flash:
+
+```
+idf.py set-target esp32c3
+idf.py -p /dev/cu.usbmodem* flash
+```
+
+wiring on the c3 supermini (sensor pin -> board pin):
+
+| sensor | esp32-c3 | notes |
+| -- | -- | -- |
+| 1, 3 (power) | 3V3 | not 5V |
+| 2 (touch_out) | GPIO2 | strapping pin, but only during reset |
+| 4 (sensor rx) | GPIO20 | the esp transmits here |
+| 5 (sensor tx) | GPIO21 | the esp receives here |
+| 6 (ground) | GND | |
+
+the two uart pins are easy to swap. `FINGER PROBE` sweeps both orientations
+and the plausible baud rates and reports which combination the sensor answers
+on, so a silent sensor does not have to be guesswork:
+
+```
+FINGER PROBE
+OK FINGER PROBE tx=21,rx=20,baud=57600:- ... tx=20,rx=21,baud=57600:OK
+```
+
+the c3 build also disables the idf console. the tinytouch line protocol and the
+esp log would otherwise share one port, and interleaved log lines corrupt the
+protocol the host helper parses. `KEYBOARD TEST` types a literal string over
+the ble link, which is the way to check the keyboard without a configured host.
 
 ## notes
 
