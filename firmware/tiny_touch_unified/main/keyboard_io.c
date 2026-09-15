@@ -136,6 +136,11 @@ void ble_hid_task_start_up(void) { host_connected = true; }
 
 bool keyboard_io_ready(void) { return hid_device != NULL && host_connected; }
 
+const char *keyboard_io_state(void) {
+  if (!hid_device) return "offline";
+  return host_connected ? "connected" : "advertising";
+}
+
 bool keyboard_io_send(uint8_t modifier, uint8_t keycode) {
   if (!keyboard_io_ready()) return false;
   uint8_t report[8] = {modifier, 0, keycode, 0, 0, 0, 0, 0};
@@ -153,6 +158,8 @@ bool keyboard_io_send(uint8_t modifier, uint8_t keycode) {
 void keyboard_io_init(void) {}
 
 bool keyboard_io_ready(void) { return tud_hid_ready(); }
+
+const char *keyboard_io_state(void) { return tud_hid_ready() ? "usb" : "offline"; }
 
 bool keyboard_io_send(uint8_t modifier, uint8_t keycode) {
   uint8_t report[6] = {keycode, 0, 0, 0, 0, 0};

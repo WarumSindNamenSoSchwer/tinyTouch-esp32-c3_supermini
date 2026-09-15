@@ -15,6 +15,7 @@
 #include "sdkconfig.h"
 
 #include "device_config.h"
+#include "keyboard_io.h"
 #include "fingerprint.h"
 #include "firmware_update.h"
 #include "piv.h"
@@ -151,12 +152,12 @@ static void status(void) {
   bool sensor_is_ready = fingerprint_is_ready();
   snprintf(line, sizeof(line),
            "OK STATUS protocol=6 firmware=%s build=%s mode=%s piv=%s sensor=%s fingerprints=%d "
-           "hosts=%u ota=%s",
+           "hosts=%u ota=%s keyboard=%s",
            TINYTOUCH_FIRMWARE_VERSION, TINYTOUCH_BUILD_ID, device_config_mode_name(),
            piv_uses_provisioned_keys() ? "ready" : "unconfigured",
            sensor_is_ready ? "ready" : "offline", count,
            (unsigned)device_config_hid_host_count(), firmware_update_staged() ? "staged" :
-           (firmware_update_active() ? "writing" : "idle"));
+           (firmware_update_active() ? "writing" : "idle"), keyboard_io_state());
   reply(line);
 }
 

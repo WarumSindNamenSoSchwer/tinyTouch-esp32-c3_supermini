@@ -17,3 +17,8 @@ bool keyboard_io_ready(void);
 
 // Send one boot-keyboard report. keycode 0 releases all keys.
 bool keyboard_io_send(uint8_t modifier, uint8_t keycode);
+
+// One word describing the transport for STATUS: usb, advertising, connected,
+// or offline. A BLE build is useless until a host is bonded, so the operator
+// needs to see that state without a Bluetooth scanner.
+const char *keyboard_io_state(void);
