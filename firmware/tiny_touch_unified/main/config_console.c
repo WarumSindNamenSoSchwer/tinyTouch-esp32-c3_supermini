@@ -237,6 +237,13 @@ static void keyboard_test(void) {
   touch_pin_hid_type_test(text, sizeof(text));
 }
 
+static void fingerprint_list(void) {
+  char line[48];
+  snprintf(line, sizeof(line), "OK FINGER LIST bitmap=%08lx",
+           (unsigned long)fingerprint_slot_bitmap());
+  reply(line);
+}
+
 static void fingerprint_probe_command(void) {
   char report[256] = {0};
   bool found = fingerprint_probe(report, sizeof(report));
@@ -374,6 +381,7 @@ static void handle_command(void) {
   else if (strncmp(command, "HOST REMOVE ", 12) == 0) host_remove(command + 12);
   else if (strcmp(command, "HOST LIST") == 0) host_list();
   else if (strcmp(command, "FINGER PROBE") == 0) fingerprint_probe_command();
+  else if (strcmp(command, "FINGER LIST") == 0) fingerprint_list();
   else if (strcmp(command, "KEYBOARD TEST") == 0) keyboard_test();
   else if (strncmp(command, "FINGER ", 7) == 0) fingerprint_command(command + 7);
   else if (strcmp(command, "PIV CREATE") == 0) piv_create();

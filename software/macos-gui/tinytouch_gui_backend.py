@@ -32,11 +32,22 @@ AGENT = "com.tinytouch.helper"
 LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / f"{AGENT}.plist"
 LOG_FILE = Path.home() / "Library" / "Logs" / "tinyTouch" / "helper.log"
 
-ENROLLMENT_VIEWS = (
-    ("left edge", "linke Kante"),
-    ("right edge", "rechte Kante"),
-    ("top", "obere Kante"),
-    ("center", "Mitte"),
+# Slot layout: up to 4 fingers, 8 template slots per finger.
+# Finger f (1-4), view v (1-8) -> device slot (f-1)*8 + v. Every enrolled view
+# is an independent template the sensor's search matches against, so more
+# views per finger directly reduce false rejections.
+SLOTS_PER_FINGER = 8
+MAX_FINGERS = 4
+
+ENROLLMENT_VIEWS_8 = (
+    ("Mitte", "flach mittig auflegen"),
+    ("linke Kante", "leicht nach links gekippt"),
+    ("rechte Kante", "leicht nach rechts gekippt"),
+    ("obere Kante", "Fingerspitze Richtung Sensor-Oberkante"),
+    ("untere Kante", "Fingerbeere Richtung Sensor-Unterkante"),
+    ("Mitte gedreht", "flach, Finger leicht gedreht"),
+    ("links steil", "stärker nach links gekippt"),
+    ("rechts steil", "stärker nach rechts gekippt"),
 )
 
 
@@ -250,43 +261,88 @@ def action_pair() -> None:
         session.close()
 
 
-def action_enroll() -> None:
+def action_enroll(finger: int, views: int) -> None:
+    """Enroll one finger into its slot range with 4 or 8 views."""
+    if not 1 <= finger <= MAX_FINGERS:
+        fail(f"Finger muss 1..{MAX_FINGERS} sein.")
+    if views not in (4, 8):
+        fail("Anzahl der Scans muss 4 oder 8 sein.")
+    base = (finger - 1) * SLOTS_PER_FINGER
     session = Session()
     try:
-        unlock(session, "Registrierung starten")
-        for index, (view_en, view_de) in enumerate(ENROLLMENT_VIEWS, 1):
-            state = {"stage": "first"}
+        unlock(session, f"Registrierung von Finger {finger} starten")
+        # Old templates in this finger's range would otherwise keep matching
+        # after a re-enrollment; clear the range first.
+        for offset in range(SLOTS_PER_FINGER):
+            try:
+                session.command(f"FINGER DELETE {base + offset + 1}", timeout=5)
+            except DeviceError:
+                pass  # empty slot
+        for index in range(1, views + 1):
+            view_de, hint = ENROLLMENT_VIEWS_8[index - 1]
+            slot = base + index
 
-            def on_event(name, view_de=view_de, index=index, state=state):
+            def on_event(name, view_de=view_de, hint=hint, index=index):
                 if name == "TOUCH":
                     emit(event="enroll_touch", slot=index, view=view_de,
-                         tap=1, total=len(ENROLLMENT_VIEWS),
-                         message=f"Ansicht {index}/4: {view_de} auflegen")
+                         tap=1, total=views,
+                         message=f"Scan {index}/{views}: {view_de} ({hint})")
                 elif name == "LIFT":
                     emit(event="enroll_lift", slot=index, view=view_de,
                          message="Finger abheben")
                 elif name == "TOUCH_AGAIN":
                     emit(event="enroll_touch", slot=index, view=view_de,
-                         tap=2, total=len(ENROLLMENT_VIEWS),
-                         message=f"Ansicht {index}/4: {view_de} nochmal auflegen")
+                         tap=2, total=views,
+                         message=f"Scan {index}/{views}: {view_de} nochmal auflegen")
 
-            session.command(f"FINGER ENROLL {index}", timeout=45, on_event=on_event)
-            emit(event="enroll_done", slot=index, view=view_de)
-        emit(event="done", message="Alle 4 Ansichten registriert.")
+            session.command(f"FINGER ENROLL {slot}", timeout=60, on_event=on_event)
+            emit(event="enroll_done", slot=index, view=view_de, total=views)
+        emit(event="done", message=f"Finger {finger}: {views} Scans registriert.")
     finally:
         session.close()
 
 
-def action_delete(slot: str) -> None:
+def action_delete(target: str) -> None:
     session = Session()
     try:
         unlock(session, "Fingerabdruck löschen")
-        if slot == "all":
+        if target == "all":
             session.command("FINGER CLEAR", timeout=10)
             emit(event="done", message="Alle Fingerabdrücke gelöscht.")
         else:
-            session.command(f"FINGER DELETE {int(slot)}", timeout=10)
-            emit(event="done", message=f"Slot {slot} gelöscht.")
+            finger = int(target)
+            if not 1 <= finger <= MAX_FINGERS:
+                fail(f"Finger muss 1..{MAX_FINGERS} sein.")
+            base = (finger - 1) * SLOTS_PER_FINGER
+            removed = 0
+            for offset in range(SLOTS_PER_FINGER):
+                try:
+                    session.command(f"FINGER DELETE {base + offset + 1}", timeout=5)
+                    removed += 1
+                except DeviceError:
+                    pass
+            emit(event="done",
+                 message=f"Finger {finger} gelöscht ({removed} Scans entfernt).")
+    finally:
+        session.close()
+
+
+def action_fingers() -> None:
+    session = Session()
+    try:
+        lines = session.command("FINGER LIST", timeout=5)
+        bitmap = 0
+        for line in lines:
+            match = re.search(r"bitmap=([0-9a-fA-F]+)", line)
+            if match:
+                bitmap = int(match.group(1), 16)
+        fingers = []
+        for finger in range(1, MAX_FINGERS + 1):
+            base = (finger - 1) * SLOTS_PER_FINGER
+            count = sum(1 for offset in range(SLOTS_PER_FINGER)
+                        if bitmap & (1 << (base + offset)))
+            fingers.append({"finger": finger, "views": count})
+        emit(event="fingers", fingers=fingers)
     finally:
         session.close()
 
@@ -358,9 +414,13 @@ def main() -> None:
         elif command == "pair":
             action_pair()
         elif command == "enroll":
-            action_enroll()
+            finger = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+            views = int(sys.argv[3]) if len(sys.argv) > 3 else 4
+            action_enroll(finger, views)
         elif command == "delete":
             action_delete(sys.argv[2])
+        elif command == "fingers":
+            action_fingers()
         elif command == "computers":
             action_computers()
         elif command == "remove-computer":

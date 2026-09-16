@@ -45,7 +45,11 @@ static const int FP_RX_PIN = FP_RX_PIN_NUM;
 static const int FP_INT_PIN = FP_INT_PIN_NUM;
 static const int INT_ACTIVE_VALUE = 1;
 static const uint16_t START_SLOT = 1;
-static const uint16_t END_SLOT = 5;
+// ZW101-class sensors store far more templates than the five the prototype
+// used. 32 slots allow four fingers with up to eight enrolled views each;
+// every additional view is another template the search command can match, so
+// more views directly reduce false rejections for off-center touches.
+static const uint16_t END_SLOT = 32;
 static const uint32_t FINGER_WAIT_MS = 7000;
 static const uint8_t FP_LED_BLUE = 0x01;
 static const uint8_t FP_LED_GREEN = 0x02;
@@ -485,6 +489,27 @@ int fingerprint_count(void) {
     }
   }
   return -1;
+}
+
+uint32_t fingerprint_slot_bitmap(void) {
+  // Read the sensor's index table (0x1f): a bitmap of occupied template slots.
+  // In the table, bit n of byte n/8 is PageID n (observed on hardware: slots
+  // 1..4 enrolled -> raw 0x1e). The return value renumbers that to bit 0 =
+  // slot 1 so callers never see the sensor's 0-based PageID scheme.
+  if (!fp_take(2000)) return 0;
+  uint8_t params[] = {0x00};
+  uint8_t confirm = 0xff;
+  uint8_t data[32];
+  size_t data_len = sizeof(data);
+  bool ok = fp_command(0x1f, params, sizeof(params), &confirm, data, &data_len, 2000) &&
+            confirm == 0x00 && data_len >= 4;
+  fp_give();
+  if (!ok) return 0;
+  uint32_t bitmap = 0;
+  for (unsigned slot = 1; slot <= 32; slot++) {
+    if (data[slot / 8] & (1u << (slot % 8))) bitmap |= (1u << (slot - 1));
+  }
+  return bitmap;
 }
 
 static bool wait_capture_template(uint8_t buffer_id, uint32_t timeout_ms) {

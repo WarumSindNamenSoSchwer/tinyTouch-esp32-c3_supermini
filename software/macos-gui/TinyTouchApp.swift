@@ -8,6 +8,11 @@ import SwiftUI
 
 // MARK: - Backend bridge
 
+struct FingerInfo: Decodable, Equatable {
+    let finger: Int
+    let views: Int
+}
+
 struct BackendEvent: Decodable {
     let event: String
     var message: String?
@@ -28,6 +33,8 @@ struct BackendEvent: Decodable {
     // computers payload
     var ids: [String]?
     var capacity: Int?
+    // fingers payload
+    var fingers: [FingerInfo]?
     // logs payload
     var lines: [String]?
 }
@@ -106,7 +113,8 @@ final class AppState: ObservableObject {
 
     @Published var busy = false               // a device session is running
     @Published var banner: Banner? = nil      // transient instruction/result
-    @Published var enrollProgress: (slot: Int, tap: Int)? = nil
+    @Published var enrollProgress: (slot: Int, tap: Int, total: Int)? = nil
+    @Published var fingers: [FingerInfo] = []
     @Published var computers: [String] = []
     @Published var computerCapacity = 8
     @Published var logLines: [String] = []
@@ -145,12 +153,13 @@ final class AppState: ObservableObject {
         case "unlocked":
             banner = .init(kind: .info, text: "Autorisiert.")
         case "enroll_touch":
-            enrollProgress = (event.slot ?? 0, event.tap ?? 1)
+            enrollProgress = (event.slot ?? 0, event.tap ?? 1, event.total ?? 4)
             banner = .init(kind: .touch, text: event.message ?? "")
         case "enroll_lift":
             banner = .init(kind: .info, text: "Finger abheben")
         case "enroll_done":
-            banner = .init(kind: .info, text: "Ansicht \(event.slot ?? 0)/4 gespeichert")
+            banner = .init(kind: .info,
+                           text: "Scan \(event.slot ?? 0)/\(event.total ?? 4) gespeichert")
         case "typing":
             banner = .init(kind: .info, text: event.message ?? "")
         case "done":
@@ -160,6 +169,8 @@ final class AppState: ObservableObject {
         case "computers":
             computers = event.ids ?? []
             computerCapacity = event.capacity ?? 8
+        case "fingers":
+            fingers = event.fingers ?? []
         case "logs":
             logLines = event.lines ?? []
         default:
@@ -310,11 +321,11 @@ struct ContentView: View {
             HStack {
                 StatusDot(ok: state.fingerprintCount > 0,
                           text: state.fingerprintCount > 0
-                                ? "\(state.fingerprintCount) von 4 Ansichten registriert"
+                                ? "\(state.fingerprintCount) Scans auf dem Gerät"
                                 : "Keine registriert")
                 Spacer()
-                Button("Neu registrieren…") {
-                    Task { await state.perform(["enroll"]) }
+                Button("Finger laden") {
+                    Task { await state.perform(["fingers"]) }
                 }
                 .disabled(state.busy || !state.deviceConnected)
                 Button(role: .destructive) { showDeleteConfirm = true } label: {
@@ -322,8 +333,36 @@ struct ContentView: View {
                 }
                 .disabled(state.busy || !state.deviceConnected || state.fingerprintCount == 0)
             }
+            ForEach(state.fingers, id: \.finger) { info in
+                HStack {
+                    Image(systemName: "hand.point.up.left")
+                    Text("Finger \(info.finger)")
+                    Text(info.views > 0 ? "\(info.views) Scans" : "leer")
+                        .font(.caption)
+                        .foregroundStyle(info.views > 0 ? .green : .secondary)
+                    Spacer()
+                    Menu("Registrieren") {
+                        Button("4 Scans (schnell)") {
+                            Task { await state.perform(["enroll", String(info.finger), "4"]) }
+                        }
+                        Button("8 Scans (genauer)") {
+                            Task { await state.perform(["enroll", String(info.finger), "8"]) }
+                        }
+                    }
+                    .frame(width: 130)
+                    .disabled(state.busy)
+                    if info.views > 0 {
+                        Button("Löschen", role: .destructive) {
+                            Task { await state.perform(["delete", String(info.finger)]) }
+                        }
+                        .controlSize(.small)
+                        .disabled(state.busy)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
             if let progress = state.enrollProgress {
-                EnrollmentProgress(slot: progress.slot, tap: progress.tap)
+                EnrollmentProgress(slot: progress.slot, tap: progress.tap, total: progress.total)
             }
             HStack {
                 Button("Tastaturtest") {
@@ -437,19 +476,19 @@ struct BannerView: View {
 struct EnrollmentProgress: View {
     let slot: Int
     let tap: Int
-    private let views = ["Linke Kante", "Rechte Kante", "Obere Kante", "Mitte"]
+    let total: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                ForEach(1...4, id: \.self) { index in
+            HStack(spacing: 6) {
+                ForEach(1...max(total, 1), id: \.self) { index in
                     RoundedRectangle(cornerRadius: 4)
                         .fill(index < slot ? Color.green
                               : index == slot ? Color.blue : Color.secondary.opacity(0.2))
                         .frame(height: 6)
                 }
             }
-            Text("Ansicht \(slot)/4 · \(views[max(0, slot - 1)]) · Berührung \(tap)/2")
+            Text("Scan \(slot)/\(total) · Berührung \(tap)/2")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
