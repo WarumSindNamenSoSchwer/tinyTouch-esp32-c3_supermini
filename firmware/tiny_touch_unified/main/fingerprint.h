@@ -20,6 +20,12 @@ void fingerprint_led_idle(void);
 // Direct LED control: function 1..6 (breathe, flash, on, off, fade in/out),
 // color bitmask (1 blue, 2 green, 4 red), cycles (0 = forever).
 bool fingerprint_led_set(uint8_t function, uint8_t color, uint8_t cycles);
+// Full form: {function, start_color, end_color, cycles}.
+bool fingerprint_led_set_pair(uint8_t function, uint8_t start_color,
+                              uint8_t end_color, uint8_t cycles);
+// Paced result feedback: three long green blinks or three seconds of red,
+// then the ready state. Blocks for the duration.
+void fingerprint_show_result(bool ok);
 fingerprint_match_t fingerprint_authorize_poll_match(void);
 bool fingerprint_authorize_prompted(void (*prompt)(void));
 bool fingerprint_prompted_authorization_active(void);

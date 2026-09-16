@@ -238,19 +238,27 @@ static void keyboard_test(void) {
 }
 
 static void led_command(char *arguments) {
-  // LED <function> <color> [cycles]; see fingerprint_led_set for the ranges.
+  // LED <function> <color> [cycles]              (start = end color)
+  // LED <function> <start> <end> <cycles>        (crossfade form)
   // Deliberately not gated behind AUTH: the LED reveals nothing and being able
   // to identify a device by blinking it is exactly the point.
-  uint32_t function = 0, color = 0, cycles = 0;
+  uint32_t function = 0, color = 0, end = 0, cycles = 0;
   char *save = NULL;
   char *first = strtok_r(arguments, " ", &save);
   char *second = strtok_r(NULL, " ", &save);
   char *third = strtok_r(NULL, " ", &save);
+  char *fourth = strtok_r(NULL, " ", &save);
   bool ok = first && second &&
             parse_u32(first, 6, &function) && function >= 1 &&
-            parse_u32(second, 7, &color) && color >= 1 &&
-            (!third || parse_u32(third, 255, &cycles));
-  if (ok) ok = fingerprint_led_set((uint8_t)function, (uint8_t)color, (uint8_t)cycles);
+            parse_u32(second, 7, &color) && color >= 1;
+  if (ok && fourth) {
+    ok = parse_u32(third, 7, &end) && end >= 1 && parse_u32(fourth, 255, &cycles);
+    if (ok) ok = fingerprint_led_set_pair((uint8_t)function, (uint8_t)color,
+                                          (uint8_t)end, (uint8_t)cycles);
+  } else if (ok) {
+    ok = !third || parse_u32(third, 255, &cycles);
+    if (ok) ok = fingerprint_led_set((uint8_t)function, (uint8_t)color, (uint8_t)cycles);
+  }
   reply(ok ? "OK LED" : "ERR LED");
 }
 

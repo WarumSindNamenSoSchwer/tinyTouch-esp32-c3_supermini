@@ -410,6 +410,7 @@ static void touch_hid_task(void *arg) {
     .presence_armed = false,
   };
   TickType_t next_recovery = 0;
+  bool last_keyboard_ready = keyboard_io_ready();
   touch_pin_hid_log_event("task_started", 0);
 
   while (true) {
@@ -426,6 +427,13 @@ static void touch_hid_task(void *arg) {
       continue;
     }
     TickType_t now = xTaskGetTickCount();
+    // The ready indication depends on whether a BLE host is connected, so
+    // refresh it whenever that state flips.
+    bool keyboard_ready = keyboard_io_ready();
+    if (keyboard_ready != last_keyboard_ready) {
+      last_keyboard_ready = keyboard_ready;
+      fingerprint_led_idle();
+    }
     if (usb_sensor_probe_pending && now >= usb_sensor_probe_at) {
       // Match the helper's successful post-enumeration STATUS probe. The
       // sensor may finish booting after USB, so retry only until it responds.
@@ -482,17 +490,16 @@ static void touch_hid_task(void *arg) {
     if (match.slot == 0) {
       touch_pin_hid_log_event("finger_no_match", 0);
       auth_wait_for_lift(&runtime, now);
-      vTaskDelay(pdMS_TO_TICKS(350));
-      fingerprint_led_idle();
+      // Rejection: three seconds of steady red, then the ready state.
+      fingerprint_show_result(false);
       continue;
     }
 
     touch_pin_hid_log_event("finger_matched", match.slot);
-    // Keep result feedback bounded. Host communication must not leave the
-    // sensor green when a helper, USB endpoint, or PIN field is unavailable.
-    vTaskDelay(pdMS_TO_TICKS(350));
-    fingerprint_led_idle();
+    // Deliver the password first so LED pacing never delays typing, then run
+    // the three paced green blinks and return to the ready state.
     handle_fingerprint_match(match);
+    fingerprint_show_result(true);
     auth_wait_for_lift(&runtime, xTaskGetTickCount());
   }
 }

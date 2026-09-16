@@ -5,6 +5,7 @@
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "keyboard_io.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -54,6 +55,8 @@ static const uint32_t FINGER_WAIT_MS = 7000;
 static const uint8_t FP_LED_BLUE = 0x01;
 static const uint8_t FP_LED_GREEN = 0x02;
 static const uint8_t FP_LED_RED = 0x04;
+static const uint8_t FP_LED_PURPLE = 0x05;  // red + blue
+static const uint8_t FP_LED_FUNC_BREATHE = 1;
 static const uint8_t FP_LED_FUNC_STEADY = 3;
 
 static SemaphoreHandle_t fp_mutex;
@@ -225,16 +228,64 @@ static void fp_give(void) {
   if (fp_mutex) xSemaphoreGive(fp_mutex);
 }
 
-static void set_aura(uint8_t color) {
-  uint8_t params[] = {FP_LED_FUNC_STEADY, color, color, 0};
+static void set_aura_pair(uint8_t function, uint8_t start_color,
+                          uint8_t end_color, uint8_t cycles) {
+  // Aura layout on this sensor: {function, start_color, end_color, count}.
+  // This is the layout the original S3 product used; a speed-byte variant was
+  // tried on this hardware and produced wrong colors, confirming there is no
+  // speed control: timing of breathing/flashing is fixed by the sensor.
+  uint8_t params[] = {function, start_color, end_color, cycles};
   uint8_t confirm = 0xff;
   fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000);
 }
 
+static void set_aura(uint8_t color) {
+  set_aura_pair(FP_LED_FUNC_STEADY, color, color, 0);
+}
+
+static void aura_off(void) {
+  set_aura_pair(4 /* off */, 0, 0, 0);
+}
+
+static void aura_idle(void) {
+  // Ready state. With a BLE host connected the LED holds a calm steady
+  // purple; without one it breathes purple as a "waiting for connection"
+  // signal. The aura command has neither brightness nor speed control, so a
+  // dimmer purple or a slower pulse is not achievable on this hardware.
+  if (keyboard_io_ready()) {
+    set_aura(FP_LED_PURPLE);
+  } else {
+    set_aura_pair(FP_LED_FUNC_BREATHE, FP_LED_PURPLE, FP_LED_PURPLE, 0);
+  }
+}
+
 static void show_result(bool ok) {
-  set_aura(ok ? FP_LED_GREEN : FP_LED_RED);
-  vTaskDelay(pdMS_TO_TICKS(350));
-  set_aura(FP_LED_BLUE);
+  // The sensor's own flash timing is fixed and fast, so blink pacing is done
+  // here: three long green blinks with clear gaps for a match, three seconds
+  // of steady red for a rejection, then back to the ready state.
+  if (ok) {
+    for (int blink = 0; blink < 3; blink++) {
+      set_aura(FP_LED_GREEN);
+      vTaskDelay(pdMS_TO_TICKS(450));
+      aura_off();
+      vTaskDelay(pdMS_TO_TICKS(350));
+    }
+  } else {
+    set_aura(FP_LED_RED);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+  }
+  aura_idle();
+}
+
+bool fingerprint_led_set_pair(uint8_t function, uint8_t start_color,
+                              uint8_t end_color, uint8_t cycles) {
+  if (!fp_take(1000)) return false;
+  uint8_t params[] = {function, start_color, end_color, cycles};
+  uint8_t confirm = 0xff;
+  bool ok = fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
+            confirm == 0x00;
+  fp_give();
+  return ok;
 }
 
 bool fingerprint_led_set(uint8_t function, uint8_t color, uint8_t cycles) {
@@ -253,7 +304,7 @@ bool fingerprint_led_set(uint8_t function, uint8_t color, uint8_t cycles) {
 
 void fingerprint_led_idle(void) {
   if (!fp_take(1000)) return;
-  set_aura(FP_LED_BLUE);
+  aura_idle();
   fp_give();
 }
 
@@ -344,9 +395,18 @@ fingerprint_match_t fingerprint_authorize_poll_match(void) {
     return no_match;
   }
   fingerprint_match_t match = fingerprint_match_captured(true);
-  if (match.slot) set_aura(FP_LED_GREEN);
+  // Immediate first feedback while the caller decides what to do next: green
+  // for a match, red for a rejection. fingerprint_show_result then runs the
+  // full paced sequence.
+  set_aura(match.slot ? FP_LED_GREEN : FP_LED_RED);
   fp_give();
   return match;
+}
+
+void fingerprint_show_result(bool ok) {
+  if (!fp_take(2000)) return;
+  show_result(ok);
+  fp_give();
 }
 
 void fingerprint_init(void) {
@@ -382,6 +442,7 @@ void fingerprint_init(void) {
     ok = fp_command(0x13, params, sizeof(params), &confirm, NULL, NULL, 2000) &&
          confirm == 0x00;
     set_sensor_ready(ok);
+    if (ok) aura_idle();
     fp_give();
     if (!ok && attempt < 3) vTaskDelay(pdMS_TO_TICKS(250));
   }

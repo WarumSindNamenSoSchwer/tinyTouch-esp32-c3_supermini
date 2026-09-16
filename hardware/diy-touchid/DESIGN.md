@@ -1,7 +1,11 @@
-# tinyTouch v2 — custom PCB design specification
+# DIY-TouchID — custom PCB design specification
 
 Status: design specification, ready for schematic capture.
-Owner: Muri. Derived from the working ESP32-C3 SuperMini prototype.
+Owner: Muri.
+
+DIY-TouchID is its own product. It is inspired by, and its prototype ran on,
+the open-source tinyTouch firmware (credit: Zimeng Xiong); the v2 hardware,
+name and product direction here are independent.
 
 ## goals
 
