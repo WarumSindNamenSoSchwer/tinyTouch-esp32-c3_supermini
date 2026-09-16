@@ -206,6 +206,45 @@ Realistic per-unit landed cost at qty 5: electronics ~12 €, PCBA setup+boards
 ~60–100 € total order, sensor ~10 €, battery ~4 €. First batch of 5 lands
 around 35–45 €/piece; the marginal unit is ~26 €.
 
+### fabricator choice: JLCPCB Economic PCBA beats PCBWay on price
+
+For this class of board, JLCPCB's **Economic PCBA** tier is the cheapest
+turnkey option anywhere:
+
+| | JLCPCB Economic | PCBWay turnkey |
+| -- | -- | -- |
+| assembly setup | ~$8 flat (no stencil/tooling fees on economic) | ~$30 setup + ~$1.5/part sourcing markup typical |
+| per-joint cost | fractions of a cent | higher, quote-based |
+| parts sourcing | **LCSC is in-house**: BOM parts ship to the line without markup or consolidation fees | sources from distributors with markup |
+| 5-board prototype, this BOM | **~$45–70 total** incl. boards | ~$100–150 total |
+| quote process | instant, fully online | partly manual review |
+
+Constraints of the economic tier that this design must respect (all easy):
+- 2 or 4 layer, 0.8–1.6 mm, green (or black at 1.0/1.2/1.6 mm)
+- min package 0402, min IC pitch 0.40 mm, min BGA pitch 0.5 mm
+- single-sided placement: **put all SMD on the top side**
+- every BOM line should be an LCSC "Basic" or cheap "Extended" part
+  (each Extended reel adds a ~$3 loading fee; the BOM above is almost
+  entirely stocked at LCSC, including ESP32-S3-MINI-1, ATECC608B,
+  LIS2DW12, BQ24074, TPS63001, MAX17048, TYPE-C-31-M-12)
+
+Design workflow bonus: designing in **EasyEDA (or KiCad with the JLC
+plugin)** gives live LCSC stock/price per part and one-click BOM+CPL export
+in exactly the format their line expects.
+
+PCBWay remains the better choice only for things this project does not need
+(special stackups, matte finishes, double-sided assembly of dense boards,
+low-volume machining). Verdict: **JLCPCB Economic PCBA, all-top-side
+layout, LCSC-only BOM.** Expect the first 5 assembled boards for roughly
+half the PCBWay price.
+
+Even cheaper paths, and why not:
+- Hand assembly of bare JLC boards: you explicitly do not want to solder,
+  and QFN/module work without tools is not realistic anyway.
+- Battery/sensor via the fab: never; both ship separately regardless of
+  fabricator (batteries do not fly in assembly orders, the sensor is not a
+  catalog part).
+
 Cost cuts that do not hurt:
 - Drop MAX17048, read battery voltage on an ADC pin through a divider
   (−1.20 €, battery % becomes an estimate).
