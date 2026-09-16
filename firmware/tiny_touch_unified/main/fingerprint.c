@@ -237,6 +237,20 @@ static void show_result(bool ok) {
   set_aura(FP_LED_BLUE);
 }
 
+bool fingerprint_led_set(uint8_t function, uint8_t color, uint8_t cycles) {
+  // Direct aura control (0x3c). Functions on ZW101-class sensors:
+  // 1 breathing, 2 flashing, 3 steady on, 4 off, 5 fade in, 6 fade out.
+  // Color is a bitmask: 1 blue, 2 green, 4 red; combinations mix channels.
+  // cycles limits breathing/flashing repetitions, 0 repeats forever.
+  if (!fp_take(1000)) return false;
+  uint8_t params[] = {function, color, color, cycles};
+  uint8_t confirm = 0xff;
+  bool ok = fp_command(0x3c, params, sizeof(params), &confirm, NULL, NULL, 1000) &&
+            confirm == 0x00;
+  fp_give();
+  return ok;
+}
+
 void fingerprint_led_idle(void) {
   if (!fp_take(1000)) return;
   set_aura(FP_LED_BLUE);

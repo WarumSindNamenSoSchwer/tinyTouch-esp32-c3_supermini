@@ -237,6 +237,23 @@ static void keyboard_test(void) {
   touch_pin_hid_type_test(text, sizeof(text));
 }
 
+static void led_command(char *arguments) {
+  // LED <function> <color> [cycles]; see fingerprint_led_set for the ranges.
+  // Deliberately not gated behind AUTH: the LED reveals nothing and being able
+  // to identify a device by blinking it is exactly the point.
+  uint32_t function = 0, color = 0, cycles = 0;
+  char *save = NULL;
+  char *first = strtok_r(arguments, " ", &save);
+  char *second = strtok_r(NULL, " ", &save);
+  char *third = strtok_r(NULL, " ", &save);
+  bool ok = first && second &&
+            parse_u32(first, 6, &function) && function >= 1 &&
+            parse_u32(second, 7, &color) && color >= 1 &&
+            (!third || parse_u32(third, 255, &cycles));
+  if (ok) ok = fingerprint_led_set((uint8_t)function, (uint8_t)color, (uint8_t)cycles);
+  reply(ok ? "OK LED" : "ERR LED");
+}
+
 static void fingerprint_list(void) {
   char line[48];
   snprintf(line, sizeof(line), "OK FINGER LIST bitmap=%08lx",
@@ -382,6 +399,7 @@ static void handle_command(void) {
   else if (strcmp(command, "HOST LIST") == 0) host_list();
   else if (strcmp(command, "FINGER PROBE") == 0) fingerprint_probe_command();
   else if (strcmp(command, "FINGER LIST") == 0) fingerprint_list();
+  else if (strncmp(command, "LED ", 4) == 0) led_command(command + 4);
   else if (strcmp(command, "KEYBOARD TEST") == 0) keyboard_test();
   else if (strncmp(command, "FINGER ", 7) == 0) fingerprint_command(command + 7);
   else if (strcmp(command, "PIV CREATE") == 0) piv_create();
